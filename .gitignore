@@ -1,0 +1,45 @@
+# Maven build output
+target/
+*/target/
+*.class
+*.jar
+*.war
+
+# Environment — NEVER commit real credentials
+.env
+*.env.local
+!.env.example
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Kiro IDE runtime files (keep .kiro/specs/ — they're useful portfolio artifacts)
+.kiro/hooks/
+.kiro/settings/
+.kiro/steering/
+
+# Local Maven installation
+.tools/
+
+# Docker
+.dockerignore
+
+# Kubernetes local credentials
+kubeconfig
+*.kubeconfig
+
+# Logs
+*.log
+logs/
+
+# OS
+ehthumbs.db
+desktop.ini
+
+# GitHub Actions local runner
+.act/

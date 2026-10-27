@@ -1,0 +1,17 @@
+# =============================================================
+# Kubernetes Namespace: demo
+#
+# All workloads for this project live in the "demo" namespace.
+# Keeping everything in a dedicated namespace makes it easy to:
+#   - See all project resources at once:  kubectl get all -n demo
+#   - Tear everything down cleanly:       kubectl delete namespace demo
+#   - Apply RBAC rules scoped to this ns only
+# =============================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    # Labels help tools like Prometheus and Helm identify this namespace
+    project: self-healing-pipeline
+    environment: local

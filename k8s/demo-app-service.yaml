@@ -1,0 +1,38 @@
+# =============================================================
+# demo-app Service
+#
+# A ClusterIP Service exposes demo-app pods to other services
+# inside the cluster (Prometheus, healing-agent, etc.).
+#
+# DNS name inside the cluster:
+#   demo-app.demo.svc.cluster.local:8080
+#
+# To access it from your laptop during development, use:
+#   kubectl port-forward svc/demo-app -n demo 8080:8080
+# =============================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app
+  namespace: demo
+  labels:
+    app: demo-app
+    project: self-healing-pipeline
+  annotations:
+    description: "Exposes demo-app pods within the cluster"
+spec:
+  # ClusterIP is internal-only (no external access without port-forward or Ingress).
+  # This is appropriate for a local learning cluster.
+  type: ClusterIP
+
+  selector:
+    # Routes traffic to pods with this label (matches the Deployment's pod template)
+    app: demo-app
+
+  ports:
+    - name: http
+      protocol: TCP
+      # Port that other services use to reach demo-app
+      port: 8080
+      # Port that demo-app listens on inside the container
+      targetPort: http

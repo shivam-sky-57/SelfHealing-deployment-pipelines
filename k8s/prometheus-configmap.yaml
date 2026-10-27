@@ -1,0 +1,85 @@
+# =============================================================
+# Prometheus Configuration — ConfigMap
+#
+# Learning notes:
+#   global.scrape_interval   — how often Prometheus pulls metrics
+#   global.evaluation_interval — how often alert rules are evaluated
+#   rule_files                — where Prometheus loads alert rules from
+#   alerting                  — tells Prometheus where Alertmanager lives
+#   scrape_configs            — the list of targets Prometheus will scrape
+#
+# The demo-app job scrapes /actuator/prometheus every 15 seconds.
+# That endpoint is provided by micrometer-registry-prometheus.
+# =============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: demo
+  labels:
+    app: prometheus
+    project: self-healing-pipeline
+data:
+  prometheus.yml: |
+    global:
+      # Pull metrics from every target every 15 seconds
+      scrape_interval: 15s
+      # Evaluate alert rules every 15 seconds
+      evaluation_interval: 15s
+      # Label added to every time series and alert originating from this Prometheus
+      external_labels:
+        cluster: 'local'
+        project: 'self-healing-pipeline'
+
+    # Load alert rule files from this path inside the container.
+    # The prometheus-rules ConfigMap is mounted here (see Deployment).
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    # Tell Prometheus where Alertmanager is running.
+    # When an alert fires, Prometheus sends it to this address.
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - 'alertmanager.demo.svc.cluster.local:9093'
+
+    scrape_configs:
+
+      # ---- Prometheus self-monitoring ----
+      # Prometheus exposes its own metrics at /metrics on port 9090.
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # ---- demo-app ----
+      # Scrapes the Spring Boot Micrometer Prometheus endpoint.
+      # Spring Boot + micrometer-registry-prometheus exposes this at
+      # /actuator/prometheus (configured in application.yml).
+      #
+      # What metrics you'll see:
+      #   demo_requests_total  — incremented by DemoController on every GET /
+      #   demo_errors_total    — incremented by DemoController on every error
+      #   jvm_*                — JVM memory, GC, threads (from Micrometer)
+      #   http_server_*        — HTTP request durations (from Spring Web)
+      #   process_*            — OS-level process metrics
+      - job_name: 'demo-app'
+        scrape_interval: 15s
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets:
+              - 'demo-app.demo.svc.cluster.local:8080'
+        # Add a label to every metric from this job so you can filter in PromQL
+        relabel_configs:
+          - target_label: job
+            replacement: demo-app
+
+      # ---- healing-agent self-monitoring ----
+      # The healing-agent also exposes Actuator + Prometheus metrics
+      # so you can monitor the responder itself.
+      - job_name: 'healing-agent'
+        scrape_interval: 30s
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets:
+              - 'healing-agent.demo.svc.cluster.local:8081'

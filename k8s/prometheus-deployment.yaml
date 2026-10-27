@@ -1,0 +1,117 @@
+# =============================================================
+# Prometheus Deployment
+#
+# Runs the Prometheus server that:
+#   1. Scrapes /actuator/prometheus on demo-app every 15s
+#   2. Evaluates alert rules (HighErrorRate, PodNotReady, DemoAppDown)
+#   3. Sends fired alerts to Alertmanager
+#
+# Two ConfigMaps are mounted into the container:
+#   prometheus-config → /etc/prometheus/prometheus.yml  (scrape + alerting config)
+#   prometheus-rules  → /etc/prometheus/rules/          (alert rule files)
+#
+# Learning note: In production you'd use the Prometheus Operator with
+# ServiceMonitor resources. For learning purposes, plain ConfigMaps
+# with direct Deployments are simpler and easier to understand.
+# =============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: demo
+  labels:
+    app: prometheus
+    project: self-healing-pipeline
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        project: self-healing-pipeline
+    spec:
+      # Use a dedicated ServiceAccount (follows least-privilege principle)
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          # Use a pinned version so the demo is reproducible
+          image: prom/prometheus:v2.51.2
+          imagePullPolicy: IfNotPresent
+          args:
+            # Where Prometheus reads its main config file
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            # Where Prometheus stores TSDB data (time-series database)
+            - '--storage.tsdb.path=/prometheus'
+            # Only keep 24 hours of data — plenty for local demos
+            - '--storage.tsdb.retention.time=24h'
+            # Enable the web UI and the /-/reload endpoint
+            - '--web.enable-lifecycle'
+            # External URL — update this if you expose Prometheus via Ingress
+            - '--web.external-url=http://localhost:9090'
+          ports:
+            - name: http
+              containerPort: 9090
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Mount the scrape configuration
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+              readOnly: true
+            # Mount the rules directory
+            - name: prometheus-rules
+              mountPath: /etc/prometheus/rules
+              readOnly: true
+            # Ephemeral storage for TSDB data (lost on pod restart — fine for demos)
+            - name: prometheus-storage
+              mountPath: /prometheus
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+        - name: prometheus-rules
+          configMap:
+            name: prometheus-rules
+        # emptyDir = ephemeral storage that lives as long as the pod.
+        # This is fine for a local demo. In production, use a PersistentVolumeClaim.
+        - name: prometheus-storage
+          emptyDir: {}
+---
+# =============================================================
+# Prometheus ServiceAccount
+# Prometheus needs cluster-level read access to discover
+# pod/service endpoints. For this project we use static scrape
+# targets so the ServiceAccount doesn't need special RBAC.
+# =============================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: demo
+  labels:
+    app: prometheus
+    project: self-healing-pipeline

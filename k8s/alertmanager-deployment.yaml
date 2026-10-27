@@ -1,0 +1,79 @@
+# =============================================================
+# Alertmanager Deployment
+#
+# Alertmanager receives fired alerts from Prometheus and routes
+# them to the healing-agent webhook at:
+#   http://healing-agent.demo.svc.cluster.local:8081/alerts
+#
+# The alertmanager-config ConfigMap is mounted into the container.
+# =============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: demo
+  labels:
+    app: alertmanager
+    project: self-healing-pipeline
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+        project: self-healing-pipeline
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - '--config.file=/etc/alertmanager/alertmanager.yml'
+            # Ephemeral data storage — fine for demos
+            - '--storage.path=/alertmanager'
+            # External URL — update if you expose via Ingress
+            - '--web.external-url=http://localhost:9093'
+            # Cluster listen address — set to empty string to disable clustering
+            # (we only run 1 replica, so clustering is not needed)
+            - '--cluster.listen-address='
+          ports:
+            - name: http
+              containerPort: 9093
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: alertmanager-config
+              mountPath: /etc/alertmanager/alertmanager.yml
+              subPath: alertmanager.yml
+              readOnly: true
+            - name: alertmanager-storage
+              mountPath: /alertmanager
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9093
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9093
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: alertmanager-config
+          configMap:
+            name: alertmanager-config
+        - name: alertmanager-storage
+          emptyDir: {}

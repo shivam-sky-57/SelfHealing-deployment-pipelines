@@ -1,0 +1,135 @@
+# =============================================================
+# demo-app Deployment
+#
+# Deploys 2 replicas of the demo-app Spring Boot service.
+# Key learning points:
+#   - revisionHistoryLimit keeps the last 10 ReplicaSets so
+#     we always have a previous revision to roll back to.
+#   - liveness probe  → Kubernetes restarts the container if
+#     the app is stuck/deadlocked (health/liveness returns DOWN).
+#   - readiness probe → Kubernetes stops sending traffic to a
+#     pod that isn't ready to serve requests.
+#   - FORCE_FAILURE env var → set to "true" to break the app
+#     for the self-healing demo without changing code.
+# =============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: demo
+  labels:
+    app: demo-app
+    project: self-healing-pipeline
+  annotations:
+    # Human-readable description visible in kubectl describe
+    description: "Deliberately breakable Spring Boot REST demo application"
+spec:
+  # 2 replicas makes the rolling update and self-healing behaviour visible
+  replicas: 2
+
+  # Keep the last 10 ReplicaSets so we can roll back to any of them.
+  # The healing-agent uses "kubectl rollout undo" which needs this history.
+  revisionHistoryLimit: 10
+
+  selector:
+    matchLabels:
+      app: demo-app
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Allow one extra pod during the update (reduces downtime)
+      maxSurge: 1
+      # Never take a pod away before the new one is ready
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app: demo-app
+        project: self-healing-pipeline
+      annotations:
+        # Prometheus scrape annotations (used by some Prometheus configs)
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: demo-app
+          # In CI/CD, GitHub Actions replaces "latest" with the commit SHA.
+          # For local testing, build the image and tag it "local":
+          #   docker build -t demo-app:local demo-app/
+          #   (for kind: kind load docker-image demo-app:local --name self-healing)
+          image: demo-app:latest
+          imagePullPolicy: IfNotPresent  # Use local image if present; don't pull from registry
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # ---- Environment Variables ----
+          env:
+            # Set to "true" during a live demo to trigger the HighErrorRate alert.
+            # The healing-agent will then detect the failure, analyze the root cause,
+            # and roll back the deployment automatically.
+            - name: FORCE_FAILURE
+              value: "false"
+
+          # ---- Resource Requests and Limits ----
+          # Requests: what Kubernetes guarantees the container will get.
+          # Limits: the maximum the container can use before being throttled/killed.
+          resources:
+            requests:
+              cpu: 100m      # 0.1 CPU cores
+              memory: 256Mi  # 256 MiB RAM
+            limits:
+              cpu: 500m      # 0.5 CPU cores
+              memory: 512Mi  # 512 MiB RAM
+
+          # ---- Liveness Probe ----
+          # Kubernetes restarts the container if this fails.
+          # Spring Boot Actuator's /health/liveness returns 200 when the app
+          # is alive, and 503 when it's in a stuck/deadlocked state.
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            # Give the app 30s to start before checking liveness
+            initialDelaySeconds: 30
+            # Check every 10 seconds
+            periodSeconds: 10
+            # Must succeed once to be considered live
+            successThreshold: 1
+            # Restart the container after 3 consecutive failures
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          # ---- Readiness Probe ----
+          # Kubernetes stops routing traffic to the pod if this fails.
+          # /health/readiness returns 200 when the app is ready to serve requests.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            # Check after 20s (app starts faster than liveness needs)
+            initialDelaySeconds: 20
+            # Check every 5 seconds — faster than liveness so traffic stops quickly
+            periodSeconds: 5
+            successThreshold: 1
+            # Remove from service after 3 consecutive failures
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          # ---- Startup Probe ----
+          # Prevents liveness from killing a slow-starting container.
+          # Gives the app up to 60s (12 * 5s) to start before liveness takes over.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            failureThreshold: 12
+            periodSeconds: 5
+
+      # Graceful shutdown: give the app 30s to finish in-flight requests
+      terminationGracePeriodSeconds: 30

@@ -1,0 +1,73 @@
+# =============================================================
+# demo-app — Spring Boot Application Configuration
+# =============================================================
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: demo-app
+
+# =============================================================
+# Actuator — expose all relevant management endpoints.
+#
+# Prometheus scrapes /actuator/prometheus every 15 seconds.
+# Kubernetes probes use:
+#   liveness  → /actuator/health/liveness
+#   readiness → /actuator/health/readiness
+# =============================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        # Expose health, info, metrics, and prometheus.
+        # Do NOT expose env or configprops in production — they can leak secrets.
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      # Enable separate liveness and readiness sub-paths for Kubernetes probes
+      probes:
+        enabled: true
+      # Show full component status — useful for debugging locally
+      show-details: always
+    prometheus:
+      enabled: true
+    info:
+      enabled: true
+  # Micrometer Prometheus registry — enables /actuator/prometheus endpoint
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    # Tag every metric with the application name so Prometheus can filter by app
+    tags:
+      application: ${spring.application.name}
+
+# =============================================================
+# Application info — exposed at /actuator/info
+# =============================================================
+info:
+  app:
+    name: demo-app
+    description: Deliberately breakable Spring Boot REST demo application
+    version: 1.0.0
+
+# =============================================================
+# Custom application properties
+# =============================================================
+app:
+  # Read from the FORCE_FAILURE environment variable.
+  # Set to "true" in the Kubernetes Deployment env section to break the app
+  # during a live demo — no code changes or image rebuilds needed.
+  force-failure: ${FORCE_FAILURE:false}
+
+# =============================================================
+# Logging — structured output helps Kubernetes log aggregators
+# =============================================================
+logging:
+  level:
+    com.example.demoapp: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

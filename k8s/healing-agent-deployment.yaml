@@ -1,0 +1,120 @@
+# =============================================================
+# healing-agent Deployment (complete — Phase 6 + 9)
+#
+# The healing-agent needs:
+#   1. A ServiceAccount with RBAC to read K8s resources + execute rollback
+#   2. Secrets for GROQ_API_KEY and GITHUB_TOKEN (never hard-coded)
+#   3. Config env vars for Kubernetes namespace, GitHub owner/repo
+#
+# Before applying, create the secret:
+#   kubectl create secret generic healing-agent-secrets -n demo \
+#     --from-literal=GROQ_API_KEY=gsk_... \
+#     --from-literal=GITHUB_TOKEN=ghp_...
+# =============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healing-agent
+  namespace: demo
+  labels:
+    app: healing-agent
+    project: self-healing-pipeline
+  annotations:
+    description: "Incident-response service — receives Alertmanager webhooks and heals deployments"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: healing-agent
+  strategy:
+    type: Recreate   # Only 1 replica; Recreate avoids two agents running simultaneously
+  template:
+    metadata:
+      labels:
+        app: healing-agent
+        project: self-healing-pipeline
+    spec:
+      # ServiceAccount with RBAC permissions for K8s API access
+      serviceAccountName: healing-agent
+
+      containers:
+        - name: healing-agent
+          image: healing-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+
+          env:
+            # ---- Secrets (from Kubernetes Secret, never hard-coded) ----
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: healing-agent-secrets
+                  key: GROQ_API_KEY
+                  optional: true   # App starts even without key; LLM falls back to UNKNOWN
+
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: healing-agent-secrets
+                  key: GITHUB_TOKEN
+                  optional: true   # App starts even without token; GitHub steps are skipped
+
+            # ---- LLM Config ----
+            - name: GROQ_MODEL
+              value: "llama3-8b-8192"
+            - name: GROQ_API_URL
+              value: "https://api.groq.com/openai/v1/chat/completions"
+
+            # ---- GitHub Config (set these to your values) ----
+            - name: GITHUB_OWNER
+              value: ""    # TODO: set to your GitHub username or org
+            - name: GITHUB_REPO
+              value: "self-healing-deployment-pipeline"
+
+            # ---- Kubernetes Config ----
+            - name: KUBE_NAMESPACE
+              value: "demo"
+            - name: KUBE_DEPLOYMENT_NAME
+              value: "demo-app"
+
+            # ---- Remediation Policy ----
+            - name: ROLLBACK_COOLDOWN_MINUTES
+              value: "5"
+            - name: POST_DEPLOY_WINDOW_MINUTES
+              value: "10"
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            failureThreshold: 12
+            periodSeconds: 5
+
+      terminationGracePeriodSeconds: 30

@@ -1,0 +1,132 @@
+# =============================================================
+# Prometheus Alert Rules — ConfigMap
+#
+# This file is mounted into the Prometheus container at
+# /etc/prometheus/rules/demo-app-rules.yml (see Deployment).
+#
+# Two alert rules for demo-app:
+#
+#   HighErrorRate  — fires when error_rate > 50% for 1 continuous minute.
+#                   This is the main trigger for the self-healing demo.
+#                   Call GET /fail repeatedly to trigger it.
+#
+#   PodNotReady    — fires when any demo-app pod leaves the Ready state
+#                   for 2 continuous minutes. Triggered by a broken image,
+#                   OOMKill, or persistent probe failures.
+#
+# Learning notes on PromQL:
+#   rate(counter[1m])       — per-second average rate over 1 minute
+#   increase(counter[1m])   — total increase over 1 minute
+#   + 0.001                 — avoids division-by-zero when request count is 0
+#   for: 1m                 — alert only fires after condition is TRUE for 1 min
+#                             (prevents flapping on a single bad scrape)
+# =============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: demo
+  labels:
+    app: prometheus
+    project: self-healing-pipeline
+data:
+  demo-app-rules.yml: |
+    groups:
+      - name: demo-app-alerts
+        # Evaluate these rules every 15 seconds (inherits global evaluation_interval)
+        rules:
+
+          # -----------------------------------------------------------
+          # Alert: HighErrorRate
+          #
+          # Fires when more than 50% of requests to demo-app have been
+          # errors for at least 1 continuous minute.
+          #
+          # How to trigger this alert:
+          #   kubectl port-forward svc/demo-app -n demo 8080:8080
+          #   # Then in a loop:
+          #   for ($i = 0; $i -lt 100; $i++) { curl http://localhost:8080/fail }
+          #
+          # Or set FORCE_FAILURE=true on the Deployment:
+          #   kubectl set env deployment/demo-app -n demo FORCE_FAILURE=true
+          # -----------------------------------------------------------
+          - alert: HighErrorRate
+            expr: |
+              (
+                rate(demo_errors_total_total[1m])
+                /
+                (rate(demo_requests_total_total[1m]) + 0.001)
+              ) > 0.5
+            # The condition must be true for this long before the alert fires.
+            # This prevents false positives from a single burst of errors.
+            for: 1m
+            labels:
+              severity: critical
+              # These labels are read by the healing-agent to identify what to fix
+              deployment: demo-app
+              namespace: demo
+            annotations:
+              summary: "High error rate in demo-app"
+              description: >-
+                More than 50% of requests to demo-app have been failing for 1 minute.
+                Current error rate: {{ $value | humanizePercentage }}.
+                This may indicate a bad deployment. The healing-agent will investigate.
+              # Runbook link — useful in real setups; placeholder here
+              runbook_url: "https://github.com/your-org/self-healing-deployment-pipeline/docs/runbooks"
+
+          # -----------------------------------------------------------
+          # Alert: PodNotReady
+          #
+          # Fires when any pod in the demo-app Deployment is not in
+          # the Ready state for at least 2 continuous minutes.
+          #
+          # This catches:
+          #   - Pods stuck in Pending (resource constraints, image pull errors)
+          #   - Pods stuck in CrashLoopBackOff (app crash on startup)
+          #   - Pods failing readiness probes (app is up but can't serve traffic)
+          #
+          # Note: kube_pod_status_ready requires kube-state-metrics to be running.
+          # For local clusters, you can install it with:
+          #   kubectl apply -f https://github.com/kubernetes/kube-state-metrics/releases/latest/download/kube-state-metrics.yaml
+          #
+          # Alternative without kube-state-metrics (uses only demo-app metrics):
+          #   up{job="demo-app"} == 0
+          # -----------------------------------------------------------
+          - alert: PodNotReady
+            expr: |
+              kube_pod_status_ready{
+                namespace="demo",
+                pod=~"demo-app-.*",
+                condition="true"
+              } == 0
+            for: 2m
+            labels:
+              severity: warning
+              deployment: demo-app
+              namespace: demo
+            annotations:
+              summary: "demo-app pod not ready"
+              description: >-
+                Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has not been
+                ready for 2 minutes. This may indicate a crash loop or probe failure.
+              runbook_url: "https://github.com/your-org/self-healing-deployment-pipeline/docs/runbooks"
+
+          # -----------------------------------------------------------
+          # Alert: DemoAppDown  (simpler alternative to PodNotReady)
+          #
+          # Fires when Prometheus cannot scrape demo-app at all.
+          # Does NOT require kube-state-metrics.
+          # Use this as your primary availability alert on a bare kind cluster.
+          # -----------------------------------------------------------
+          - alert: DemoAppDown
+            expr: up{job="demo-app"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              deployment: demo-app
+              namespace: demo
+            annotations:
+              summary: "demo-app is unreachable"
+              description: >-
+                Prometheus cannot scrape demo-app at /actuator/prometheus.
+                The service may be down or the pods may not be running.

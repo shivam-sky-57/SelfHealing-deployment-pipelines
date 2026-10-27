@@ -1,0 +1,84 @@
+# =============================================================
+# healing-agent RBAC — ServiceAccount + Role + RoleBinding
+#
+# The healing-agent needs the minimum permissions to:
+#   READ:  deployments, pods, pods/log, events, replicasets
+#   WRITE: deployments/rollback (via kubectl rollout undo =
+#          patching the Deployment's rollout revision annotation)
+#
+# All permissions are scoped to the "demo" namespace only.
+# The healing-agent has NO access to other namespaces or
+# cluster-level resources.
+#
+# Learning note: This follows the principle of least privilege.
+# Never use ClusterAdmin or wildcard permissions for an
+# automated agent.
+# =============================================================
+
+---
+# ServiceAccount — the identity used by healing-agent pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: healing-agent
+  namespace: demo
+  labels:
+    app: healing-agent
+    project: self-healing-pipeline
+
+---
+# Role — defines what the healing-agent is allowed to do
+# in the "demo" namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: healing-agent-role
+  namespace: demo
+  labels:
+    app: healing-agent
+    project: self-healing-pipeline
+rules:
+
+  # Read and update Deployments (needed for rollout undo)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch", "update"]
+
+  # Read ReplicaSets (needed for rollout history)
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list"]
+
+  # Read Pod status and metadata
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+  # Read container logs (used for evidence collection)
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+  # Read Kubernetes Events (warning events are key evidence)
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
+
+---
+# RoleBinding — grants the healing-agent ServiceAccount the Role above
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: healing-agent-rolebinding
+  namespace: demo
+  labels:
+    app: healing-agent
+    project: self-healing-pipeline
+subjects:
+  - kind: ServiceAccount
+    name: healing-agent
+    namespace: demo
+roleRef:
+  kind: Role
+  name: healing-agent-role
+  apiGroup: rbac.authorization.k8s.io

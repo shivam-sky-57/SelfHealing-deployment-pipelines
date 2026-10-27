@@ -1,0 +1,97 @@
+# =============================================================
+# Alertmanager Configuration — ConfigMap
+#
+# Alertmanager receives fired alerts from Prometheus and routes
+# them to receivers (Slack, PagerDuty, webhooks, etc.).
+#
+# In this project the only receiver is the healing-agent webhook.
+# When an alert fires, Alertmanager POSTs a JSON payload to:
+#   http://healing-agent.demo.svc.cluster.local:8081/alerts
+#
+# Learning notes:
+#   group_by     — alerts with the same labels are batched into one notification
+#   group_wait   — how long to wait before sending the first notification
+#                  (collects multiple alerts that fire at the same time)
+#   group_interval — how long to wait before sending a follow-up notification
+#                    if new alerts join the group
+#   repeat_interval — how long to wait before re-sending an unresolved alert
+#   send_resolved   — set false because healing-agent only needs firing alerts;
+#                     it tracks its own cooldown
+# =============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: demo
+  labels:
+    app: alertmanager
+    project: self-healing-pipeline
+data:
+  alertmanager.yml: |
+    global:
+      # If a firing alert stops updating, mark it resolved after this long
+      resolve_timeout: 5m
+
+    # The route tree. Every incoming alert walks this tree from the top
+    # to find which receiver to send it to.
+    route:
+      # Group alerts that share these labels into a single notification.
+      # This prevents 10 separate webhooks firing for 10 pods of the same app.
+      group_by: ['alertname', 'namespace', 'deployment']
+
+      # Wait 10 seconds after the first alert in a group before sending.
+      # This allows related alerts to be batched together.
+      group_wait: 10s
+
+      # After the initial notification, wait this long before sending another
+      # if new alerts join the group.
+      group_interval: 30s
+
+      # For ongoing (unresolved) alerts, re-send the webhook after this long.
+      # 10 minutes is long enough to let the healing-agent finish responding,
+      # but short enough to re-alert if the fix didn't work.
+      repeat_interval: 10m
+
+      # Default receiver for all alerts
+      receiver: 'healing-agent'
+
+      # Child routes — add more specific routing here if needed in the future.
+      # For example: route critical alerts differently from warnings.
+      routes:
+        # All critical alerts go to healing-agent immediately
+        - match:
+            severity: critical
+          receiver: 'healing-agent'
+          group_wait: 5s     # Critical alerts wait less before firing
+          continue: false    # Don't also match the parent route
+
+        # Warning alerts also go to healing-agent but with standard timing
+        - match:
+            severity: warning
+          receiver: 'healing-agent'
+          continue: false
+
+    # Inhibition rules prevent low-priority alerts firing when a high-priority
+    # alert for the same component is already firing.
+    inhibit_rules:
+      # If DemoAppDown (critical) is firing, suppress PodNotReady (warning)
+      # for the same deployment — they're describing the same problem.
+      - source_match:
+          alertname: DemoAppDown
+        target_match:
+          alertname: PodNotReady
+        equal: ['namespace', 'deployment']
+
+    receivers:
+      # The healing-agent webhook receiver.
+      # Alertmanager sends a POST request to this URL with a JSON body
+      # in the Alertmanager webhook format (version 4).
+      - name: 'healing-agent'
+        webhook_configs:
+          - url: 'http://healing-agent.demo.svc.cluster.local:8081/alerts'
+            # Do NOT send "resolved" notifications — the healing-agent
+            # uses its own cooldown and verification logic.
+            send_resolved: false
+            # HTTP timeout for the webhook call
+            http_config:
+              follow_redirects: true
