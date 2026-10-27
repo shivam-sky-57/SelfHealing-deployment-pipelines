@@ -40,7 +40,7 @@ spec:
 
       containers:
         - name: healing-agent
-          image: healing-agent:latest
+          image: healing-agent:local
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -68,9 +68,9 @@ spec:
             - name: GROQ_API_URL
               value: "https://api.groq.com/openai/v1/chat/completions"
 
-            # ---- GitHub Config (set these to your values) ----
+            # ---- GitHub Config ----
             - name: GITHUB_OWNER
-              value: ""    # TODO: set to your GitHub username or org
+              value: "YOUR_GITHUB_USERNAME"    # ← change this
             - name: GITHUB_REPO
               value: "self-healing-deployment-pipeline"
 

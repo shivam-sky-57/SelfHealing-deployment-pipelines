@@ -60,7 +60,7 @@ spec:
           # For local testing, build the image and tag it "local":
           #   docker build -t demo-app:local demo-app/
           #   (for kind: kind load docker-image demo-app:local --name self-healing)
-          image: demo-app:latest
+          image: demo-app:local
           imagePullPolicy: IfNotPresent  # Use local image if present; don't pull from registry
 
           ports:

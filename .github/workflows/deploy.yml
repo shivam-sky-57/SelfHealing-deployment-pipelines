@@ -137,6 +137,9 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=latest
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push demo-app Docker image
         uses: docker/build-push-action@v5
         with:
@@ -144,8 +147,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   # ===========================================================================
   # Job 2b: Build and push healing-agent Docker image to GHCR
@@ -182,6 +183,9 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=latest
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push healing-agent Docker image
         uses: docker/build-push-action@v5
         with:
@@ -189,8 +193,6 @@ jobs:
           push: true
           tags: ${{ steps.meta-ha.outputs.tags }}
           labels: ${{ steps.meta-ha.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   # ===========================================================================
   # Job 3: Deploy to Kubernetes
